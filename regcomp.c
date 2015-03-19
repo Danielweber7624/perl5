@@ -17711,14 +17711,45 @@ S_re_croak2(pTHX_ bool utf8, const char* pat1,const char* pat2,...)
     Perl_croak(aTHX_ "%"UTF8f, UTF8fARG(utf8, l1-1, buf));
 }
 
-/* Get this:  We have an empty void function here.  But it somehow got into
-   the API, so there you go.  */
+/* XXX Here's a total kludge.  But we need to re-enter for swash routines. */
+
 
 #ifndef PERL_IN_XSUB_RE
 void
 Perl_save_re_context(pTHX)
 {
-    PERL_UNUSED_CONTEXT;
+    dVAR;
+    I32 len;
+    char *key;
+    GV *gv;
+
+    /* localise any seen $1-type vars. RT #124109 */
+
+    if (!PL_defstash)
+        return;
+    (void)hv_iterinit(PL_defstash);
+
+    /* search %:: for $`, $&, $', $1..$n */
+    while ((gv = (GV*)hv_iternextsv(PL_defstash, &key, &len))) {
+        if (len < 1)
+            continue;
+        if (len == 1
+            && key[0] != '&' && key[0] != '`' && key[0] != '\''
+            && (key[0] < '1' || key[0] > '9')
+        )
+            continue;
+        if (len > 1) {
+            char *p = key;
+            for (; p < key + len; p++) {
+                if (*p < '0' || *p > '9')
+                    break;
+            }
+            if (p != key + len)
+                continue;
+        }
+        if (SvTYPE(gv) == SVt_PVGV && GvSV(gv))
+            save_scalar(gv);
+    }
 }
 #endif
 
